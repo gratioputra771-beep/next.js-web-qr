@@ -4,13 +4,18 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const session = await getServerSession(authOptions)
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
 
+    const { id } = await params
+
     const siswa = await prisma.siswa.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         user: { select: { nama: true, email: true, foto: true, aktif: true } },
         kelas: { select: { namaKelas: true, tingkat: true, tahunAjaran: true } },
@@ -29,17 +34,21 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const session = await getServerSession(authOptions)
     if (!session || (session.user.role !== 'GURU' && session.user.role !== 'ADMIN')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
+    const { id } = await params
     const body = await req.json()
     const { nama, kelasId, jenisKelamin, tanggalLahir, noHpOrtu, emailOrtu, alamat } = body
 
-    const siswa = await prisma.siswa.findUnique({ where: { id: params.id } })
+    const siswa = await prisma.siswa.findUnique({ where: { id } })
     if (!siswa) return NextResponse.json({ error: 'Siswa tidak ditemukan' }, { status: 404 })
 
     await prisma.user.update({
@@ -48,7 +57,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     })
 
     const updated = await prisma.siswa.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         kelasId,
         jenisKelamin: jenisKelamin || null,
@@ -66,17 +75,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const session = await getServerSession(authOptions)
     if (!session || (session.user.role !== 'GURU' && session.user.role !== 'ADMIN')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
-    const siswa = await prisma.siswa.findUnique({ where: { id: params.id } })
+    const { id } = await params
+
+    const siswa = await prisma.siswa.findUnique({ where: { id } })
     if (!siswa) return NextResponse.json({ error: 'Siswa tidak ditemukan' }, { status: 404 })
 
-    // Soft delete — deactivate
     await prisma.user.update({
       where: { id: siswa.userId },
       data: { aktif: false },
