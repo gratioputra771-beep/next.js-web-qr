@@ -34,18 +34,17 @@ export default function QRScanner({ onScan, isProcessing = false }: QRScannerPro
     setActive(false)
   }, [])
 
-  const scanFrame = useCallback(async () => {
+  const scanFrame = useCallback((jsQR: any) => {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
-      animFrameRef.current = requestAnimationFrame(scanFrame)
+      animFrameRef.current = requestAnimationFrame(() => scanFrame(jsQR))
       return
     }
 
     const now = Date.now()
-    // Scan setiap 300ms saja agar tidak berat
     if (now - lastScanRef.current < 300) {
-      animFrameRef.current = requestAnimationFrame(scanFrame)
+      animFrameRef.current = requestAnimationFrame(() => scanFrame(jsQR))
       return
     }
     lastScanRef.current = now
@@ -53,60 +52,57 @@ export default function QRScanner({ onScan, isProcessing = false }: QRScannerPro
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    if (!ctx) { animFrameRef.current = requestAnimationFrame(() => scanFrame(jsQR)); return }
 
-    if ('BarcodeDetector' in window) {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'dontInvert',
+    })
+
+    if (code) {
+      const raw = code.data as string
+      let token = raw
       try {
-        const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] })
-        const barcodes = await detector.detect(canvas)
-        if (barcodes.length > 0) {
-          const raw = barcodes[0].rawValue as string
-          let token = raw
-          try {
-            const url = new URL(raw)
-            const t = url.searchParams.get('token')
-            if (t) token = t
-          } catch { }
-          onScan(token)
-          lastScanRef.current = now + 2000 // cooldown 2 detik
-        }
+        const url = new URL(raw)
+        const t = url.searchParams.get('token')
+        if (t) token = t
       } catch { }
+      onScan(token)
+      lastScanRef.current = now + 2000
     }
 
-    animFrameRef.current = requestAnimationFrame(scanFrame)
+    animFrameRef.current = requestAnimationFrame(() => scanFrame(jsQR))
   }, [onScan])
 
   const startScanner = useCallback(async () => {
     setError(null)
     try {
+      const jsQRModule = await import('jsqr')
+      const jsQR = jsQRModule.default
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       })
       streamRef.current = stream
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         videoRef.current.setAttribute('playsinline', 'true')
         await videoRef.current.play()
       }
-      setActive(true)
 
-      if (!('BarcodeDetector' in window)) {
-        setError('Browser tidak mendukung scan otomatis. Gunakan Chrome 88+ atau Edge terbaru.')
-        return
-      }
-      animFrameRef.current = requestAnimationFrame(scanFrame)
+      setActive(true)
+      animFrameRef.current = requestAnimationFrame(() => scanFrame(jsQR))
     } catch (e: any) {
       if (e.name === 'NotAllowedError') {
-        setError('Izin kamera ditolak. Klik ikon kamera di address bar → Allow → Reload.')
+        setError('Izin kamera ditolak. Klik ikon kamera di address bar → Allow → Reload halaman.')
       } else if (e.name === 'NotFoundError') {
         setError('Kamera tidak ditemukan di perangkat ini.')
+      } else if (e.name === 'NotSupportedError') {
+        setError('Kamera tidak didukung. Pastikan menggunakan HTTPS atau localhost.')
       } else {
-        setError('Gagal mengakses kamera: ' + e.message)
+        setError('Gagal mengakses kamera: ' + (e.message || e.name))
       }
     }
   }, [scanFrame])
@@ -118,18 +114,14 @@ export default function QRScanner({ onScan, isProcessing = false }: QRScannerPro
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="relative w-full max-w-sm">
-        {/* Video */}
         <video
           ref={videoRef}
           className="w-full rounded-2xl border-2 border-blue-300 object-cover bg-black"
           style={{ minHeight: 280, display: active ? 'block' : 'none' }}
           playsInline muted autoPlay
         />
-
-        {/* Canvas tersembunyi */}
         <canvas ref={canvasRef} className="hidden" />
 
-        {/* Placeholder */}
         {!active && (
           <div className="w-full rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-3 py-16">
             <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center">
@@ -141,7 +133,6 @@ export default function QRScanner({ onScan, isProcessing = false }: QRScannerPro
           </div>
         )}
 
-        {/* Frame overlay */}
         {active && (
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
             <div className="w-52 h-52 relative">
@@ -154,7 +145,6 @@ export default function QRScanner({ onScan, isProcessing = false }: QRScannerPro
           </div>
         )}
 
-        {/* Processing overlay */}
         {active && isProcessing && (
           <div className="absolute inset-0 bg-blue-900/70 flex items-center justify-center rounded-2xl">
             <div className="text-center text-white">
@@ -175,19 +165,13 @@ export default function QRScanner({ onScan, isProcessing = false }: QRScannerPro
         onClick={active ? stopScanner : startScanner}
         disabled={isProcessing}
         className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium text-sm transition shadow-lg
-          ${active
-            ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-200'
-            : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200'
-          } disabled:opacity-60 disabled:cursor-not-allowed`}
+          ${active ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200'}
+          disabled:opacity-60 disabled:cursor-not-allowed`}
       >
         {active ? <><CameraOff size={18} /> Matikan Kamera</> : <><Camera size={18} /> Aktifkan Kamera</>}
       </button>
 
-      {active && (
-        <p className="text-xs text-slate-400 text-center">
-          Arahkan QR Code ke dalam kotak — scan otomatis
-        </p>
-      )}
+      {active && <p className="text-xs text-slate-400 text-center">Arahkan QR Code ke dalam kotak — scan otomatis</p>}
     </div>
   )
 }
