@@ -49,12 +49,7 @@ export default function QRCodeDisplay({ token, siswaName, nis, kelas }: QRCodeDi
             includeMargin={false}
             fgColor="#0f172a"
             bgColor="#ffffff"
-            imageSettings={{
-              src: '/favicon.ico',
-              height: 32,
-              width: 32,
-              excavate: true,
-            }}
+           
           />
         </div>
 
